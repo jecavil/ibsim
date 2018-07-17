@@ -282,6 +282,21 @@ static void unlink_port(Node * lnode, Port * lport, Node * rnode, int rportnum)
 	}
 }
 
+static void change_port_speed_width(Node * lnode, Node * rnode)
+{
+	Port *endport;
+
+	if (lnode->type == SWITCH_NODE) {
+		endport = node_get_port(lnode, 0);
+		send_trap(endport, TRAP_144);
+	}
+
+	if (rnode->type == SWITCH_NODE) {
+		endport = node_get_port(rnode, 0);
+		send_trap(endport, TRAP_144);
+	}
+}
+
 static void port_change_lid(Port * port, int lid, int lmc)
 {
 	port->lid = lid;
@@ -449,6 +464,274 @@ static int do_unlink(FILE * f, char *line, int clear)
 	}
 
 	return unlinked;
+}
+
+static int change_speed(FILE * f, char *line)
+{
+	Port *port, *rport;
+	Node *node;
+	char *s = line;
+	char *nodeid = 0, name[NAMELEN], *sp, *orig = 0;
+	int portnum = -1;	// def - all ports
+	int speed; // LinkSpeedEnabled
+
+	if (strsep(&s, "\""))
+		orig = strsep(&s, "\"");
+
+	if (!s) {
+		fprintf(f, "# change speed: bad parameter in \"%s\"\n", line);
+		return -1;
+	}
+
+	nodeid = expand_name(orig, name, &sp);
+	if (!sp && *s == '[')
+		sp = s + 1;
+
+	if (!(node = find_node(nodeid))) {
+		fprintf(f, "# nodeid \"%s\" (%s) not found\n", orig, nodeid);
+		return -1;
+	}
+
+	if (!sp) {
+		fprintf(f, "# change speed: missing portnum\n");
+		return -1;
+	}
+
+	portnum = strtoul(sp, &sp, 0);
+	if ((portnum < 1 && node->type != SWITCH_NODE)
+	    || portnum > node->numports) {
+		fprintf(f,
+			"# can't change speed for port %d at nodeid \"%s\"\n",
+			portnum, nodeid);
+		return -1;
+	}
+
+	if (node->type != SWITCH_NODE)
+		portnum--;
+
+	port = ports + node->portsbase + portnum;
+	rport = node_get_port(port->remotenode, port->remoteport);
+
+	if (!sp || *sp != ']') {
+		fprintf(f, "# change speed: missing ']'\n");
+		return -1;
+	}
+
+	sp++;
+
+	if (sp && *sp)
+		while (isspace(*sp))
+			sp++;
+	speed = strtoul(sp, &sp, 0);
+
+	if (!speed) {
+		fprintf(f, "# change speed: speed will not be changed\n");
+		return -1;
+	}
+
+	if(speed != LINKSPEED_SDR &&
+		speed != LINKSPEED_SDR_DDR &&
+		speed != LINKSPEED_SDR_QDR &&
+		speed != LINKSPEED_SDR_DDR_QDR) {
+		fprintf(f, "# speed must be:\n"
+				"0 (No State Change)\n"
+				"1 (2.5 Gbps)\n"
+				"3 (2.5 or 5.0 Gbps)\n"
+				"5 (2.5 or 10.0 Gbps)\n"
+				"7 (2.5 or 5.0 or 10.0 Gbps)\n");
+		return -1;
+	}
+	else {
+		switch(speed) {
+			case LINKSPEED_SDR:
+				port->linkspeed = LINKSPEED_SDR;
+				rport->linkspeed = LINKSPEED_SDR;
+				break;
+			case LINKSPEED_SDR_DDR:
+				port->linkspeed = LINKSPEED_DDR;
+				rport->linkspeed = LINKSPEED_DDR;
+				break;
+			case LINKSPEED_SDR_QDR:
+				port->linkspeed = LINKSPEED_QDR;
+				rport->linkspeed = LINKSPEED_QDR;
+				break;
+			case LINKSPEED_SDR_DDR_QDR:
+				port->linkspeed = LINKSPEED_QDR;
+				rport->linkspeed = LINKSPEED_QDR;
+		}
+	}
+
+	port->linkspeedena = speed;
+	change_port_speed_width(node, port->remotenode);
+
+	return 1;
+}
+
+static int change_width(FILE * f, char *line)
+{
+	Port *port, *rport;
+	Node *node;
+	char *s = line;
+	char *nodeid = 0, name[NAMELEN], *sp, *orig = 0;
+	int portnum = -1;	// def - all ports
+	int width; // LinkWidthEnabled
+
+	if (strsep(&s, "\""))
+		orig = strsep(&s, "\"");
+
+	if (!s) {
+		fprintf(f, "# change width: bad parameter in \"%s\"\n", line);
+		return -1;
+	}
+
+	nodeid = expand_name(orig, name, &sp);
+	if (!sp && *s == '[')
+		sp = s + 1;
+
+	if (!(node = find_node(nodeid))) {
+		fprintf(f, "# nodeid \"%s\" (%s) not found\n", orig, nodeid);
+		return -1;
+	}
+
+	if (!sp) {
+		fprintf(f, "# change width: missing portnum\n");
+		return -1;
+	}
+
+	portnum = strtoul(sp, &sp, 0);
+	if ((portnum < 1 && node->type != SWITCH_NODE)
+	    || portnum > node->numports) {
+		fprintf(f,
+			"# can't change width for port %d at nodeid \"%s\"\n",
+			portnum, nodeid);
+		return -1;
+	}
+
+	if (node->type != SWITCH_NODE)
+		portnum--;
+
+	port = ports + node->portsbase + portnum;
+	rport = node_get_port(port->remotenode, port->remoteport);
+
+	if (!sp || *sp != ']') {
+		fprintf(f, "# change width: missing ']'\n");
+		return -1;
+	}
+
+	sp++;
+
+	if (sp && *sp)
+		while (isspace(*sp))
+			sp++;
+	width = strtoul(sp, &sp, 0);
+
+	if (!width) {
+		fprintf(f, "# change width: width will not be changed\n");
+		return -1;
+	}
+
+	if(width != LINKWIDTH_1x &&
+		width != LINKWIDTH_4x &&
+		width != LINKWIDTH_1x_4x &&
+		width != LINKWIDTH_8x &&
+		width != LINKWIDTH_1x_8x &&
+		width != LINKWIDTH_4x_8x &&
+		width != LINKWIDTH_1x_4x_8x &&
+		width != LINKWIDTH_12x &&
+		width != LINKWIDTH_1x_12x &&
+		width != LINKWIDTH_4x_12x &&
+		width != LINKWIDTH_1x_4x_12x &&
+		width != LINKWIDTH_8x_12x &&
+		width != LINKWIDTH_1x_8x_12x &&
+		width != LINKWIDTH_4x_8x_12x &&
+		width != LINKWIDTH_1x_4x_8x_12x) {
+		fprintf(f, "# speed must be:\n"
+		"0 (No State Change)\n"
+		"1 (1x)\n"
+		"2 (4x)\n"
+		"3 (1x or 4x)\n"
+		"4 (8x)\n"
+		"5 (1x or 8x)\n"
+		"6 (4x or 8x)\n"
+		"7 (1x or 4x or 8x)\n"
+		"8 (12x)\n"
+		"9 (1x or 12x)\n"
+		"10 (4x or 12x)\n"
+		"11 (1x or 4x or 12x)\n"
+		"12 (8x or 12x)\n"
+		"13 (1x or 8x or 12x)\n"
+		"14 (4x or 8x or 12x)\n"
+		"15 (1x or 4x or 8x or 12x)\n");
+		return -1;
+	}
+	else {
+		switch(width) {
+			case LINKWIDTH_1x:
+				port->linkwidth = LINKWIDTH_1x;
+				rport->linkwidth = LINKWIDTH_1x;
+				break;
+			case LINKWIDTH_4x:
+				port->linkwidth = LINKWIDTH_4x;
+				rport->linkwidth = LINKWIDTH_4x;
+				break;
+			case LINKWIDTH_1x_4x:
+				port->linkwidth = LINKWIDTH_4x;
+				rport->linkwidth = LINKWIDTH_4x;
+				break;
+			case LINKWIDTH_8x:
+				port->linkwidth = LINKWIDTH_8x;
+				rport->linkwidth = LINKWIDTH_8x;
+				break;
+			case LINKWIDTH_1x_8x:
+				port->linkwidth = LINKWIDTH_8x;
+				rport->linkwidth = LINKWIDTH_8x;
+				break;
+			case LINKWIDTH_4x_8x:
+				port->linkwidth = LINKWIDTH_8x;
+				rport->linkwidth = LINKWIDTH_8x;
+				break;
+			case LINKWIDTH_1x_4x_8x:
+				port->linkwidth = LINKWIDTH_8x;
+				rport->linkwidth = LINKWIDTH_8x;
+				break;
+			case LINKWIDTH_12x:
+				port->linkwidth = LINKWIDTH_12x;
+				rport->linkwidth = LINKWIDTH_12x;
+				break;
+			case LINKWIDTH_1x_12x:
+				port->linkwidth = LINKWIDTH_12x;
+				rport->linkwidth = LINKWIDTH_12x;
+				break;
+			case LINKWIDTH_4x_12x:
+				port->linkwidth = LINKWIDTH_12x;
+				rport->linkwidth = LINKWIDTH_12x;
+				break;
+			case LINKWIDTH_1x_4x_12x:
+				port->linkwidth = LINKWIDTH_12x;
+				rport->linkwidth = LINKWIDTH_12x;
+				break;
+			case LINKWIDTH_8x_12x:
+				port->linkwidth = LINKWIDTH_12x;
+				rport->linkwidth = LINKWIDTH_12x;
+				break;
+			case LINKWIDTH_1x_8x_12x:
+				port->linkwidth = LINKWIDTH_12x;
+				rport->linkwidth = LINKWIDTH_12x;
+				break;
+			case LINKWIDTH_4x_8x_12x:
+				port->linkwidth = LINKWIDTH_12x;
+				rport->linkwidth = LINKWIDTH_12x;
+				break;
+			case LINKWIDTH_1x_4x_8x_12x:
+				port->linkwidth = LINKWIDTH_12x;
+				rport->linkwidth = LINKWIDTH_12x;
+		}
+	}
+
+	port->linkwidthena = width;
+	change_port_speed_width(node, port->remotenode);
+
+	return 1;
 }
 
 static int do_set_guid(FILE * f, char *line)
@@ -836,6 +1119,8 @@ static int dump_help(FILE * f)
 	fprintf(f,
 		"\tClear \"nodeid\" : unlink & reset all links of the node\n");
 	fprintf(f, "\tClear \"nodeid\"[port] : unlink & reset port\n");
+	fprintf(f, "\tSpeed \"nodeid\"[port] <new-speed> : change LinkSpeedEnabled\n");
+	fprintf(f, "\tWidth \"nodeid\"[port] <new-width> : change LinkWidthEnabled\n");
 	fprintf(f, "\tGuid \"nodeid\" : set GUID value for this node\n");
 	fprintf(f, "\tGuid \"nodeid\"[port] : set GUID value for this port\n");
 	fprintf(f,
@@ -1170,6 +1455,10 @@ int do_cmd(char *buf, FILE *f)
 		r = do_unlink(f, line, 0);
 	else if (!strncasecmp(line, "Clear", cmd_len))
 		r = do_unlink(f, line, 1);
+	else if (!strncasecmp(line, "Speed", cmd_len))
+		r = change_speed(f, line);
+	else if (!strncasecmp(line, "Width", cmd_len))
+		r = change_width(f, line);
 	else if (!strncasecmp(line, "Guid", cmd_len))
 		r = do_set_guid(f, line);
 	else if (!strncasecmp(line, "Error", cmd_len))
